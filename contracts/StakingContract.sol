@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.4.22 <0.9.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract StakingContract {
   address owner; // Owner of this contract
+  address public stakingTokenAddress;
 
-  IERC20 stakingToken; // Staking token address is same with reward token address
+  ERC20 stakingToken; // Staking token address is same with reward token address
 
   struct Pool {
     uint256 poolId; // PoolId
@@ -24,6 +25,7 @@ contract StakingContract {
     uint256 timeDeposited; // getTimeDeposited of Pool
     uint256 stakingBalances; // Staking token balances of Pool
     uint256 rewardBalances; // Reward token balances of Pool
+    uint256 withdrawTime; // The time can withdraw
   }
 
   uint256 year = 31536000; // 365 days = 31536000s
@@ -55,6 +57,15 @@ contract StakingContract {
     _;
   }
 
+  // Check widthraw time
+  modifier checkWidthrawTime(uint256 _poolId) {
+    require(
+      block.timestamp > userInformations[msg.sender][_poolId].withdrawTime,
+      "Widthraw cannot be made during the widthraw lock period."
+    );
+    _;
+  }
+
   // ***************
   // EVENTS
   // ***************
@@ -65,7 +76,8 @@ contract StakingContract {
 
   constructor(address _stakingTokenAddress) {
     owner = msg.sender;
-    stakingToken = IERC20(_stakingTokenAddress);
+    stakingToken = ERC20(_stakingTokenAddress);
+    stakingTokenAddress = _stakingTokenAddress;
 
     pools[1] = Pool(
       1, // PoolId
@@ -89,6 +101,12 @@ contract StakingContract {
 
   // Staking ERC20 token
   function stakeTokens(uint256 _amount, uint256 _poolId) external validatePoolId(_poolId) {
+    // Check minimumAmount
+    require(
+      _amount > pools[_poolId].minimumStakeAmount,
+      "Can't staking less than the minimum amount."
+    );
+
     // Check staking limit
     require(
       pools[_poolId].maxSize > pools[_poolId].totalStakedAmount + _amount,
@@ -105,7 +123,10 @@ contract StakingContract {
       ) {
         pools[_poolId].totalStakers++; // Calculate the total staker count of Pool
         userInformations[msg.sender][_poolId].poolId = _poolId; // Set the poolId
-        userInformations[msg.sender][_poolId].lastClaimedRewards = block.timestamp; // Set the init lastClaimedRewards
+      } else {
+        uint256 rewards = this.rewardsCalculator(_poolId);
+        uint256 currentRewards = userInformations[msg.sender][_poolId].rewardBalances + rewards;
+        this.claimRewards(currentRewards, _poolId);
       }
 
       pools[_poolId].totalStakedAmount += _amount; // Calculate the total stake amount
@@ -152,14 +173,14 @@ contract StakingContract {
 
   // This function should be if a user staked he unstake the token then it should not get the amount asap there should be the time.stamp + 1 Week and then claim tokensFromStake.
   function unlockToWithdraw(uint256 _poolId) private validatePoolId(_poolId) {
-    userInformations[msg.sender][_poolId].timeDeposited = block.timestamp + week;
+    userInformations[msg.sender][_poolId].withdrawTime = block.timestamp + week;
   }
 
   // Claim's also the Unclaimed if there is Unclaimed.(if else)
   function claimStakedToken(uint256 _poolId)
     external
     validatePoolId(_poolId)
-    checkTimelock(_poolId)
+    checkWidthrawTime(_poolId)
   {
     // Call the unlockToWithdraw function
     unlockToWithdraw(_poolId);
@@ -196,7 +217,7 @@ contract StakingContract {
     validatePoolId(_poolId)
     returns (uint256)
   {
-    uint256 rewardTime = block.timestamp - userInformations[msg.sender][_poolId].lastClaimedRewards;
+    uint256 rewardTime = block.timestamp - userInformations[msg.sender][_poolId].timeDeposited;
     uint256 stakingBalances = userInformations[msg.sender][_poolId].stakingBalances;
     uint256 rewards = (rewardTime * stakingBalances * pools[_poolId].apr) / (100 * year);
     uint256 currentRewards = userInformations[msg.sender][_poolId].rewardBalances + rewards;
