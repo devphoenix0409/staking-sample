@@ -1,5 +1,6 @@
-const Migrations = artifacts.require("Migrations");
+const StakingContract = artifacts.require("StakingContract");
+const stakingTokenAddress = "Your staking token address";
 
 module.exports = function (deployer) {
-  deployer.deploy(Migrations);
+  deployer.deploy(StakingContract, stakingTokenAddress);
 };
